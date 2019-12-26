@@ -1,0 +1,7 @@
+name: project-env
+channels:
+  - defaults
+dependencies:
+  - numpy
+  - matplotlib
+  - pandas
