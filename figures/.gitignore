@@ -1,5 +1,10 @@
 # Ignore everything ...
 *
 
-# ...except this file
+# ... except this file
 !.gitignore
+
+# ... and a frw select figures
+!all_students_191227-1313.pdf
+!non-phd_students_191227-1313.pdf
+!phd_students_191227-1312.pdf

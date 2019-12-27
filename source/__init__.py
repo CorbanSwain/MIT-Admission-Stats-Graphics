@@ -428,7 +428,7 @@ def _main():
         data_frame=df,
         plot_subclasses=False,
         plot_unknown=False,
-        population='phd')
+        population='all')
     plot_accept_rate(**plot_kwargs)
     plot_yield(**plot_kwargs)
     plot_pct_change(**plot_kwargs)
@@ -437,7 +437,8 @@ def _main():
     plot_breakdown(**plot_kwargs,
                    plot_overall=False)
 
-    csutils.save_figures(directory=figure_dir)
+    csutils.save_figures(directory=figure_dir,
+                         filename=plot_kwargs['population'] + '_students')
     plt.show()
 
 
