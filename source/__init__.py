@@ -22,6 +22,27 @@ csutils.touchdir(log_dir)
 L = csutils.get_logger('default', filepath=logpath)
 
 
+pretty_str = {
+    'phd': 'PhD Students',
+    'all': 'All Students',
+    'non-phd': 'Non-PhD Students',
+    'asian': 'Asian American',
+    'black': 'Black or\nAfrican-American',
+    'white': 'White',
+    'native_american': 'Native American or\nAlaskan Native',
+    'hispanic': 'Hispanic\nor Latinx',
+    'urm': 'URM',
+    'non-urm': 'non-URM',
+    'pacific_islander': 'Native Hawaiian or\nother Pacific Islander',
+    'overall': 'Aggregate',
+    'international': 'International',
+    'num_apply': 'Applied',
+    'num_admit': 'Admitted',
+    'num_enroll': 'Enrolled',
+    'unknown': 'Unknown',
+}
+
+
 def import_spreadsheet(sheet_name: str = None):
     sheet_name = sheet_name or 'admission_data.csv'
     sheet_path = os.path.join(data_dir, sheet_name)
@@ -127,46 +148,192 @@ def regularize_table(data_frame: pd.DataFrame = None):
     return new_data_frame
 
 
-def plot_norm_accept_rate(data_frame: pd.DataFrame = None, population='phd',
-                          **kwargs):
-    data_frame = regularize_table() if data_frame is None else data_frame
+def extract_population(data_frame: pd.DataFrame, pop_name):
+    _POP_LABEL = 'population'
 
-    population_select = (data_frame.index
-                         .get_level_values('population')
-                         .get_loc(population))
-    filt_df = data_frame.loc[population_select]
-    filt_df.index = filt_df.index.droplevel('population')
+    if pop_name == 'non-phd':
+        return (extract_population(data_frame, 'all')
+                - extract_population(data_frame, 'phd'))
+    else:
+        population_select = (data_frame.index
+                             .get_level_values(_POP_LABEL)
+                             .get_loc(pop_name))
+        filtered_df = data_frame.loc[population_select]
+        filtered_df.index = filtered_df.index.droplevel(_POP_LABEL)
+        return filtered_df
 
-    totals = filt_df.sum()
-    totals_df = pd.DataFrame(totals.values.reshape((1, -1)),
-                             columns=totals.index,
-                             index=pd.Index(['overall']))
+
+def extract_overall(data_frame: pd.DataFrame, func=np.sum):
+    return pd.DataFrame(data_frame.apply(func).values.reshape((1, -1)),
+                        columns=data_frame.columns,
+                        index=pd.Index(['overall', ]))
+
+
+def extract_classes(data_frame: pd.DataFrame, func=np.sum):
+    return data_frame.groupby('class').apply(func)
+
+
+def extract_subclasses(data_frame: pd.DataFrame, func=np.sum):
+    subclass_mask = np.logical_not(csutils.logical_or(
+        *[label == data_frame.index.get_level_values('subclass')
+          for label in ['uncategorized', 'unknown', 'international']]))
+    return (data_frame
+            .loc[subclass_mask]
+            .groupby('subclass')
+            .apply(func))
+
+
+def summarize_process_data(pop_name,
+                           process_func,
+                           data_frame: pd.DataFrame = None):
+    df = regularize_table() if data_frame is None else data_frame
+    df = extract_population(df, pop_name)
+    return pd.concat([process_func(sub_df) for sub_df in
+                      [extract_func(df) for extract_func in
+                       [extract_overall,
+                        extract_classes,
+                        extract_subclasses]]])
+
+
+def plot_accept_rate(data_frame: pd.DataFrame = None, population='phd',
+                     **kwargs):
 
     def accept_rate(x: pd.Series):
         return x['num_admit'] / x['num_apply']
 
-    total_accept_rate = accept_rate(totals_df)
-    class_df = filt_df.groupby('class').sum()
-    class_accept_rate = accept_rate(class_df)
-    subclass_mask = np.logical_not(csutils.logical_or(
-        *[label == filt_df.index.get_level_values('subclass')
-          for label in ['uncategorized', 'unknown', 'international']]
-    ))
-    subclass_df = filt_df.loc[subclass_mask].groupby('subclass').sum()
-    subclass_accept_rate = accept_rate(subclass_df)
-
-    summary_df = pd.concat([total_accept_rate,
-                            class_accept_rate,
-                            subclass_accept_rate])
-
-    normalized_accept_rate = (summary_df - total_accept_rate.values) * 100
+    summary_df = summarize_process_data(pop_name=population,
+                                        process_func=accept_rate,
+                                        data_frame=data_frame)
 
     plot_summary_table(data=summary_df * 100,
-                       ylabel='Acceptance Rate (%)',
+                       ylabel='Acceptance Rate, %',
+                       legend_title=population,
                        **kwargs)
-    plot_summary_table(data=normalized_accept_rate,
-                       ylabel='Normalized Acceptance Rate (\Delta%)',
+
+    accept_rate_delta = ((summary_df - summary_df.loc['overall', :].values)
+                         * 100)
+    plot_summary_table(data=accept_rate_delta,
+                       ylabel=u'Acceptance Rate Difference, \u0394%',
+                       legend_title=population,
                        **kwargs)
+
+
+def plot_yield(data_frame: pd.DataFrame = None, population='phd',
+               **kwargs):
+
+    def _yield(x: pd.Series):
+        return x['num_enroll'] / x['num_admit']
+
+    summary_df = summarize_process_data(pop_name=population,
+                                        process_func=_yield,
+                                        data_frame=data_frame)
+    summary_df = summary_df * 100
+
+    plot_summary_table(data=summary_df,
+                       ylabel='Yield, %',
+                       legend_title=population,
+                       **kwargs)
+
+    accept_rate_delta = summary_df - summary_df.loc['overall', :].values
+    plot_summary_table(data=accept_rate_delta,
+                       ylabel=u'Yield Difference, \u0394%',
+                       legend_title=population,
+                       **kwargs)
+
+
+def plot_year_to_year_pct_change(data_frame: pd.DataFrame = None,
+                                 population='phd',
+                                 **kwargs):
+
+    def year_delta(x: pd.DataFrame):
+        new_x_values = []
+        for i in x.index:
+            x_slice = x.loc[i, :]
+            nan_filt = x_slice.notna().values
+            deltas = np.diff(x_slice.index[nan_filt],
+                             prepend=np.NaN)
+            new_slice = x_slice.values
+            new_slice[nan_filt] = deltas
+            new_x_values.append(deltas)
+        return pd.DataFrame(data=new_x_values,
+                            index=x.index,
+                            columns=x.columns)
+
+    def norm_pct_growth(x, value):
+        extracted_values = x.loc[:, value]
+        pct_change = extracted_values.pct_change(axis='columns') * 100
+        _year_delta = year_delta(extracted_values)
+        return pct_change / _year_delta
+
+    for value_name in ['num_apply', 'num_admit', 'num_enroll']:
+        summary_df = summarize_process_data(
+            pop_name=population,
+            process_func=lambda x: norm_pct_growth(x, value_name),
+            data_frame=data_frame)
+        plot_summary_table(data=summary_df,
+                           ylabel=(u'Annual Change in \u2116 '
+                                   f'{pretty_str[value_name]}, %'),
+                           legend_title=population,
+                           **kwargs)
+
+
+def plot_pct_change(data_frame: pd.DataFrame = None,
+                    population='phd',
+                    **kwargs):
+
+    def pct_change(x, value):
+        extracted_values = x.loc[:, value]
+        return ((extracted_values
+                / extracted_values.loc[:, [1999, ]].values) * 100) - 100
+
+    for value_name in ['num_apply', 'num_admit', 'num_enroll']:
+        summary_df = summarize_process_data(
+            pop_name=population,
+            process_func=lambda x: pct_change(x, value_name),
+            data_frame=data_frame)
+        plot_summary_table(data=summary_df,
+                           ylabel=(u'Change in \u2116 '
+                                   f'{pretty_str[value_name]}, %'),
+                           legend_title=population,
+                           **kwargs)
+
+
+def plot_raw_numbers(data_frame: pd.DataFrame = None,
+                     population='phd',
+                     **kwargs):
+    def raw(x, value):
+        return x.loc[:, value]
+
+    for value_name in ['num_apply', 'num_admit', 'num_enroll']:
+        summary_df = summarize_process_data(
+            pop_name=population,
+            process_func=lambda x: raw(x, value_name),
+            data_frame=data_frame)
+        plot_summary_table(data=summary_df,
+                           ylabel=(u'\u2116 '
+                                   f'{pretty_str[value_name]}'),
+                           legend_title=population,
+                           **kwargs)
+
+
+def plot_breakdown(data_frame: pd.DataFrame = None,
+                   population='phd',
+                   **kwargs):
+    def raw(x, value):
+        return x.loc[:, value]
+
+    for value_name in ['num_apply', 'num_admit', 'num_enroll']:
+        summary_df = summarize_process_data(
+            pop_name=population,
+            process_func=lambda x: raw(x, value_name),
+            data_frame=data_frame)
+        summary_df = (100
+                      * (summary_df / summary_df.loc[['overall', ], :].values))
+        plot_summary_table(data=summary_df,
+                           ylabel=('Relative % '
+                                   f'{pretty_str[value_name]}'),
+                           legend_title=population,
+                           **kwargs)
 
 
 def plot_summary_table(data: pd.DataFrame,
@@ -175,20 +342,21 @@ def plot_summary_table(data: pd.DataFrame,
                        plot_subclasses=True,
                        plot_overall=True,
                        plot_classes=True,
-                       plot_unknown=True):
+                       plot_unknown=True,
+                       legend_title: str = None):
 
-    from matplotlib.ticker import FormatStrFormatter
+    import matplotlib.ticker
 
     if axes is None:
-        _new_figure = plt.figure()
-        axes = _new_figure.add_subplot(1, 1, 1)
+        _new_figure = plt.figure(figsize=(7, 3.5))
+        axes = _new_figure.add_axes([0.13, 0.1, 0.63, 0.8])
 
     color_dict = {
         'overall':          'k',
-        'international':    '#386cb0',
-        'non-urm':          np.array((127, 201, 127)) / 255,
-        'urm':              np.array((253, 192, 134)) / 255,
-        'unknown':          np.array((190, 174, 212)) / 255,
+        'urm':              '#B35F59',
+        'non-urm':          '#33597F',
+        'international':    '#B7BF73',
+        'unknown':          'grey',
         'asian':            '#2F4A2F',
         'white':            '#578A57',
         'black':            '#7D7268',
@@ -203,39 +371,73 @@ def plot_summary_table(data: pd.DataFrame,
     unknown_only = color_dict_keys[4:5]
     subclasses_only = color_dict_keys[5:]
 
-    categories_to_plot = ((classes_only if plot_classes else [])
-                          + (subclasses_only if plot_subclasses else [])
+    categories_to_plot = ([]
                           + (overall_only if plot_overall else [])
+                          + (classes_only if plot_classes else [])
+                          + (subclasses_only if plot_subclasses else [])
                           + (unknown_only if plot_unknown else []))
 
     for cat in categories_to_plot:
         series: pd.Series = data.loc[cat, :]
         series.dropna(inplace=True)
-        plot = axes.plot(series.index, series.values)
+        plot = axes.plot(series.index, series.values,
+                         label=pretty_str[cat])
         plot: mpl.lines.Line2D = plot[0]
         plot.set_color(color_dict[cat])
         plot.set_marker('o')
-        plot.set_linewidth(1.5)
-        plot.set_markersize(5)
+        plot.set_linewidth(2.5)
+        plot.set_markersize(7)
 
     csutils.despine(axes, **{k: True for k in ['top', 'right']})
-    axes.set_xticks(np.arange(1999, 2020, 10))
-    axes.xaxis.set_major_formatter(mpl.ticker.FormatStrFormatter('%04d'))
+    axes.legend(
+        title=(None if legend_title is None
+               else (pretty_str[legend_title] + ':')),
+        title_fontsize=9.5,
+        loc='upper left',
+        bbox_to_anchor=(1.01, 1),
+        fontsize=9,
+        frameon=False,
+        ncol=1)
+    axes.set_xticks(np.arange(1999, 2020, 10))  # FIXME - hardcoded
+    axes.xaxis.set_minor_locator(mpl.ticker.IndexLocator(1, 0))
+    axes.xaxis.set_major_formatter(
+        mpl.ticker.FormatStrFormatter('%04d'))
+    axes.set_xlim(1998, 2020)  # FIXME - hardcoded
+    axes.spines['bottom'].set_bounds(1999, 2019)  # FIXME - hardcoded
+    axes.grid(True, which='major', axis='both')
     axes.set_ylabel(ylabel)
-    axes.set_xlabel(data.columns.name)
 
 
 def set_mpl_defaults():
-    font_name = 'Helvetica'
-    mpl.rcParams['font.sans-serif'] = font_name
+    font_spec = {'family': 'sans-serif',
+                 'sans-serif': 'Helvetica',
+                 'size': 13}
+    mpl.rc('font', **font_spec)
+
+    grid_spec = {'color': 'k',
+                 'alpha': 0.1}
+    mpl.rc('grid', **grid_spec)
 
 
 def _main():
     df = regularize_table()
+
     set_mpl_defaults()
-    plot_norm_accept_rate(data_frame=df,
-                          plot_subclasses=True,
-                          plot_unknown=False)
+
+    plot_kwargs = dict(
+        data_frame=df,
+        plot_subclasses=False,
+        plot_unknown=False,
+        population='phd')
+    plot_accept_rate(**plot_kwargs)
+    plot_yield(**plot_kwargs)
+    plot_pct_change(**plot_kwargs)
+    plot_raw_numbers(**plot_kwargs,
+                     plot_overall=False)
+    plot_breakdown(**plot_kwargs,
+                   plot_overall=False)
+
+    csutils.save_figures(directory=figure_dir)
     plt.show()
 
 
