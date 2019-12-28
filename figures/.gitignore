@@ -5,6 +5,9 @@
 !.gitignore
 
 # ... and a frw select figures
-!all_students_191227-1313.pdf
-!non-phd_students_191227-1313.pdf
-!phd_students_191227-1312.pdf
+!all_students.pdf
+!non-phd_students.pdf
+!phd_students.pdf
+!all_students_with_subclasses.pdf
+!non-phd_students_with_subclasses.pdf
+!phd_students_with_subclasses.pdf

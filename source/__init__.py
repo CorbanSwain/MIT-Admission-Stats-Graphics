@@ -173,14 +173,14 @@ def extract_classes(data_frame: pd.DataFrame, func=np.sum):
     return data_frame.groupby('class').apply(func)
 
 
-def extract_subclasses(data_frame: pd.DataFrame, func=np.sum):
+def extract_subclasses(data_frame: pd.DataFrame):
     subclass_mask = np.logical_not(csutils.logical_or(
         *[label == data_frame.index.get_level_values('subclass')
           for label in ['uncategorized', 'unknown', 'international']]))
     return (data_frame
             .loc[subclass_mask]
             .groupby('subclass')
-            .apply(func))
+            .first())
 
 
 def summarize_process_data(pop_name,
@@ -279,12 +279,15 @@ def plot_year_to_year_pct_change(data_frame: pd.DataFrame = None,
 
 def plot_pct_change(data_frame: pd.DataFrame = None,
                     population='phd',
+                    relative_to=1999,
                     **kwargs):
 
-    def pct_change(x, value):
+    def pct_change(x: pd.DataFrame, value):
         extracted_values = x.loc[:, value]
-        return ((extracted_values
-                / extracted_values.loc[:, [1999, ]].values) * 100) - 100
+        output = (((extracted_values
+                    / extracted_values.loc[:, [relative_to, ]].values) * 100)
+                  - 100)
+        return output
 
     for value_name in ['num_apply', 'num_admit', 'num_enroll']:
         summary_df = summarize_process_data(
@@ -351,21 +354,22 @@ def plot_summary_table(data: pd.DataFrame,
         _new_figure = plt.figure(figsize=(7, 3.5))
         axes = _new_figure.add_axes([0.13, 0.1, 0.63, 0.8])
 
-    color_dict = {
-        'overall':          'k',
-        'urm':              '#B35F59',
-        'non-urm':          '#33597F',
-        'international':    '#B7BF73',
-        'unknown':          'grey',
-        'asian':            '#2F4A2F',
-        'white':            '#578A57',
-        'black':            '#7D7268',
-        'hispanic':         '#7D5F42',
-        'native_american':  '#FDE7D2',
-        'pacific_islander': '#C9996B'
+    format_dict = {
+        'overall':          (10, 'k',       '-',  'o', 2.5, None, 1),
+        'urm':              (19, '#B35F59', '-',  'o', 2.5, None, 1),
+        'non-urm':          (18, '#33597F', '-',  'o', 2.5, None, 1),
+        'international':    (17, '#B7BF73', '-',  'o', 2.5, None, 1),
+        'unknown':          (11, 'grey',    '-',  'o', 2.5, None, 1),
+        'black':            (9,  '#BF9C99', '-',  '^', 1.5, 'w',  0.65),
+        'hispanic':         (8,  '#BF9C99', '-',  'P', 1.5, 'w',  0.65),
+        'native_american':  (7,  '#BF9C99', '-',  's', 1.5, 'w',  0.65),
+        'pacific_islander': (6,  '#BF9C99', '-',  '*', 1.5, 'w',  0.65),
+        'asian':            (2,  '#687E95', '-',  '^', 1.5, 'w',  0.65),
+        'white':            (1,  '#687E95', '-',  'P', 1.5, 'w',  0.65),
+
     }
 
-    color_dict_keys = list(color_dict.keys())
+    color_dict_keys = list(format_dict.keys())
     overall_only = color_dict_keys[0:1]
     classes_only = color_dict_keys[1:4]
     unknown_only = color_dict_keys[4:5]
@@ -383,18 +387,24 @@ def plot_summary_table(data: pd.DataFrame,
         plot = axes.plot(series.index, series.values,
                          label=pretty_str[cat])
         plot: mpl.lines.Line2D = plot[0]
-        plot.set_color(color_dict[cat])
-        plot.set_marker('o')
-        plot.set_linewidth(2.5)
-        plot.set_markersize(7)
+        _z, _c, _ls, _mk, _lw, _mkfc, _a = format_dict[cat]
+        plot.set_zorder(_z)
+        plot.set_alpha(_a)
+        plot.set_linestyle(_ls)
+        plot.set_color(_c)
+        plot.set_marker(_mk)
+        plot.set_markeredgecolor(_c)
+        plot.set_markerfacecolor(_mkfc or _c)
+        plot.set_linewidth(_lw)
+        plot.set_markersize(7.5)
 
-    csutils.despine(axes, **{k: True for k in ['top', 'right']})
+    csutils.despine(axes, **{k: True for k in ('top', 'right')})
     axes.legend(
         title=(None if legend_title is None
                else (pretty_str[legend_title] + ':')),
         title_fontsize=9.5,
         loc='upper left',
-        bbox_to_anchor=(1.01, 1),
+        bbox_to_anchor=(1, 1),
         fontsize=9,
         frameon=False,
         ncol=1)
@@ -428,17 +438,21 @@ def _main():
         data_frame=df,
         plot_subclasses=False,
         plot_unknown=False,
-        population='all')
+        population='non-phd')
     plot_accept_rate(**plot_kwargs)
     plot_yield(**plot_kwargs)
-    plot_pct_change(**plot_kwargs)
+    plot_pct_change(**plot_kwargs,
+                    relative_to=1999)
     plot_raw_numbers(**plot_kwargs,
                      plot_overall=False)
     plot_breakdown(**plot_kwargs,
                    plot_overall=False)
 
     csutils.save_figures(directory=figure_dir,
-                         filename=plot_kwargs['population'] + '_students')
+                         filename=(plot_kwargs['population'] + '_students'
+                                   + ('_with_subclasses'
+                                      if plot_kwargs['plot_subclasses']
+                                      else '')))
     plt.show()
 
 
